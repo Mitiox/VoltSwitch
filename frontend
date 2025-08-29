@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VoltExchange - P2P Renewable Energy Marketplace</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/@stacks/blockchain-api-client"></script>
+    <script src="https://unpkg.com/@stacks/connect"></script>
+    <script src="https://unpkg.com/@stacks/stacks.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .notification {
+            transition: opacity 0.5s, transform 0.5s;
+        }
+        .input-error {
+            border-color: #f87171;
+            box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.2);
+        }
+        .energy-card {
+            transition: all 0.3s ease;
+        }
+        .energy-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-green-50 to-blue-50 min-h-screen">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Clarity Smart Contract Code (for demonstration purposes)
+        const clarityContractCode = `
+        ;; EnergyToken - SIP-010 Fungible Token Contract
+        (define-constant contract-owner 'ST2CY5V39NHDPWSYMWQP12MTSYK6Z5TNMXMGQ0ZWR)
+        
+        (define-fungible-token EnergyToken)
+        
+        (define-public (mint (amount uint) (recipient principal))
+            (begin
+                (asserts! (is-eq tx-sender contract-owner) (err u100))
+                (try! (ft-mint? EnergyToken amount recipient))
+                (ok true)
+            )
+        )
+        
+        (define-public (transfer (amount uint) (sender principal) (recipient principal) (memo (optional (buff 34))))
+            (begin
+                (asserts! (is-eq tx-sender sender) (err u101))
+                (try! (ft-transfer? EnergyToken amount sender recipient memo))
+                (ok true)
+            )
+        )
+        
+        (define-public (get-balance (who principal))
+            (ok (ft-get-balance EnergyToken who))
+        )
+        
+        (define-public (get-total-supply)
+            (ok (ft-get-supply EnergyToken))
+        )
+        
+        (define-public (get-name)
+            (ok "EnergyToken")
+        )
+        
+        (define-public (get-symbol)
+            (ok "GET")
+        )
+        
+        (define-public (get-decimals)
+            (ok u2)
+        )
+        `;
+
+        // Mock data for listings
+        const mockListings = [
+            { id: 1, producer: 'SolarFarm Inc.', energy: 150, price: 0.18, location: 'Austin, TX', type: 'Solar' },
+            { id: 2, producer: 'WindPower Co.', energy: 220, price: 0.22, location: 'Amarillo, TX', type: 'Wind' },
+            { id: 3, producer: 'Green Community', energy: 80, price: 0.20, location: 'Houston, TX', type: 'Mixed' }
+        ];
+
+        // Main App Component
+        function App() {
+            const [user, setUser] = React.useState(null);
+            const [screen, setScreen] = React.useState('login');
+            const [listings, setListings] = React.useState(mockListings);
+            const [purchases, setPurchases] = React.useState([]);
+            const [energyBalance, setEnergyBalance] = React.useState(0);
+            const [notification, setNotification] = React.useState('');
+
+            // Show notification message
+            const showNotification = (message, isError = false) => {
+                setNotification({message, isError});
+                setTimeout(() => setNotification(''), 3000);
+            };
+
+            // Handle user login
+            const handleLogin = (role) => {
+                const newUser = {
+                    role,
+                    name: role === 'producer' ? 'Solar Producer' : 'Energy Consumer',
+                    address: role === 'producer' ? 'ST2CY5V39NHDPWSYMWQP12MTSYK6Z5TNMXMGQ0ZWR' : 'ST3J2GVMMM2R07ZFBJDWTYEYAR8FZH5RKDTGJ3G6T'
+                };
+                setUser(newUser);
+                setScreen(role === 'producer' ? 'producer' : 'marketplace');
+                showNotification(`Logged in as ${role}`);
+            };
+
+            // Handle user logout
+            const handleLogout = () => {
+                setUser(null);
+                setScreen('login');
+                showNotification('Logged out successfully');
+            };
+
+            // Add a new energy listing
+            const addListing = (energy, price) => {
+                const newListing = {
+                    id: listings.length + 1,
+                    producer: user.name,
+                    energy: parseInt(energy),
+                    price: parseFloat(price),
+                    location: 'Dallas, TX',
+                    type: 'Solar'
+                };
+                setListings([...listings, newListing]);
+                showNotification(`Listed ${energy} kWh for $${price}/kWh`);
+            };
+
+            // Purchase energy
+            const purchaseEnergy = (listingId, amount) => {
+                const listing = listings.find(l => l.id === listingId);
+                if (!listing) return;
+                
+                // Validation: Check if purchase amount exceeds available energy
+                if (amount > listing.energy) {
+                    showNotification(`Cannot purchase more than ${listing.energy} kWh available`, true);
+                    return;
+                }
+                
+                // Update the listing
+                const updatedListings = listings.map(l => 
+                    l.id === listingId ? {...l, energy: l.energy - amount} : l
+                );
+                setListings(updatedListings);
+                
+                // Record the purchase
+                const newPurchase = {
+                    id: purchases.length + 1,
+                    listingId,
+                    amount,
+                    totalPrice: amount * listing.price,
+                    date: new Date().toLocaleDateString(),
+                    producer: listing.producer
+                };
+                setPurchases([...purchases, newPurchase]);
+                
+                // Update energy balance
+                setEnergyBalance(energyBalance + amount);
+                
+                // Simulate blockchain token transfer
+                simulateBlockchainTransfer(amount, listing.producer, user.name);
+                
+                showNotification(`Purchased ${amount} kWh from ${listing.producer}`);
+            };
+
+            // Simulate blockchain token transfer
+            const simulateBlockchainTransfer = (amount, from, to) => {
+                console.log(`Transferring ${amount} EnergyTokens from ${from} to ${to} on Stacks blockchain`);
+                // In a real implementation, this would call the Clarity contract
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50">
+                    {/* Header */}
+                    <header className="bg-white shadow-sm">
+                        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
+                            <div className="flex items-center">
+                                <div className="bg-green-500 rounded-lg p-2 mr-3">
+                                    <i className="fas fa-bolt text-white text-2xl"></i>
+                                </div>
+                                <h1 className="text-2xl font-bold text-gray-800">VoltExchange</h1>
+                            </div>
+                            
+                            {user && (
+                                <div className="flex items-center">
+                                    <div className="mr-4 bg-green-100 px-3 py-1 rounded-full">
+                                        <span className="text-green-800">
+                                            {user.role === 'producer' ? 'Producer' : 'Consumer'}
+                                        </span>
+                                    </div>
+                                    <div className="mr-4 bg-blue-100 px-3 py-1 rounded-full">
+                                        <span className="text-blue-800">
+                                            {energyBalance} kWh
+                                        </span>
+                                    </div>
+                                    <button 
+                                        onClick={handleLogout}
+                                        className="bg-gray-100 hover:bg-gray-200 text-gray-800 px-4 py-2 rounded-lg transition"
+                                    >
+                                        Logout
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </header>
+
+                    {/* Notification */}
+                    {notification && (
+                        <div className={`fixed top-4 right-4 px-4 py-2 rounded-lg shadow-lg z-50 notification ${notification.isError ? 'bg-red-500 text-white' : 'bg-green-500 text-white'}`}>
+                            {notification.message}
+                        </div>
+                    )}
+
+                    {/* Main Content */}
+                    <main className="container mx-auto px-4 py-8">
+                        {screen === 'login' && <LoginScreen onLogin={handleLogin} />}
+                        {screen === 'producer' && <ProducerDashboard onAddListing={addListing} showNotification={showNotification} />}
+                        {screen === 'marketplace' && (
+                            <Marketplace 
+                                listings={listings} 
+                                onPurchase={purchaseEnergy} 
+                                purchases={purchases}
+                                showNotification={showNotification}
+                            />
+                        )}
+                    </main>
+
+                    {/* Footer */}
+                    <footer className="bg-white mt-12 py-6 border-t">
+                        <div className="container mx-auto px-4 text-center text-gray-600">
+                            <p>VoltExchange - Peer-to-Peer Renewable Energy Marketplace</p>
+                            <p className="mt-2 text-sm">Built on Stacks Blockchain | Clarity Smart Contracts</p>
+                        </div>
+                    </footer>
+                </div>
+            );
+        }
+
+        // Login Screen Component
+        function LoginScreen({ onLogin }) {
+            return (
+                <div className="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden p-8">
+                    <div className="text-center mb-8">
+                        <div className="bg-green-100 rounded-full p-4 inline-flex items-center justify-center">
+                            <i className="fas fa-bolt text-green-600 text-4xl"></i>
+                        </div>
+                        <h2 className="text-2xl font-bold mt-4 text-gray-800">Welcome to VoltExchange</h2>
+                        <p className="text-gray-600 mt-2">Login as a producer or consumer to get started</p>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 gap-4">
+                        <button 
+                            onClick={() => onLogin('producer')}
+                            className="bg-green-500 hover:bg-green-600 text-white py-3 rounded-lg flex items-center justify-center transition"
+                        >
+                            <i className="fas fa-solar-panel mr-2"></i>
+                            Login as Energy Producer
+                        </button>
+                        
+                        <button 
+                            onClick={() => onLogin('consumer')}
+                            className="bg-blue-500 hover:bg-blue-600 text-white py-3 rounded-lg flex items-center justify-center transition"
+                        >
+                            <i className="fas fa-plug mr-2"></i>
+                            Login as Energy Consumer
+                        </button>
+                    </div>
+                    
+                    <div className="mt-8 p-4 bg-gray-100 rounded-lg">
+                        <h3 className="font-bold text-gray-700 mb-2">For Hackathon Demo:</h3>
+                        <p className="text-sm text-gray-600">
+                            Producers can list surplus energy. Consumers can browse and purchase energy tokens.
+                            Transactions are recorded on the Stacks blockchain.
+                        </p>
+                    </div>
+                </div>
+            );
+        }
+
+        // Producer Dashboard Component
+        function ProducerDashboard({ onAddListing, showNotification }) {
+            const [energy, setEnergy] = React.useState('');
+            const [price, setPrice] = React.useState('');
+            const [errors, setErrors] = React.useState({});
+
+            const validateForm = () => {
+                const newErrors = {};
+                
+                if (!energy || energy <= 0) {
+                    newErrors.energy = "Please enter a positive energy amount";
+                }
+                
+                if (!price || price <= 0) {
+                    newErrors.price = "Please enter a positive price";
+                }
+                
+                setErrors(newErrors);
+                return Object.keys(newErrors).length === 0;
+            };
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                
+                if (!validateForm()) {
+                    showNotification("Please fix the errors in the form", true);
+                    return;
+                }
+                
+                onAddListing(energy, price);
+                setEnergy('');
+                setPrice('');
+                setErrors({});
+            };
+
+            return (
+                <div>
+                    <div className="bg-white rounded-xl shadow-md p-6 mb-8">
+                        <h2 className="text-2xl font-bold text-gray-800 mb-2">Producer Dashboard</h2>
+                        <p className="text-gray-600">List your surplus renewable energy for sale on the marketplace</p>
+                    
+                        <form onSubmit={handleSubmit} className="mt-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Energy Amount (kWh)</label>
+                                    <div className="relative">
+                                        <input 
+                                            type="number" 
+                                            value={energy}
+                                            onChange={(e) => {
+                                                setEnergy(e.target.value);
+                                                if (e.target.value <= 0) {
+                                                    setErrors({...errors, energy: "Please enter a positive value"});
+                                                } else {
+                                                    const newErrors = {...errors};
+                                                    delete newErrors.energy;
+                                                    setErrors(newErrors);
+                                                }
+                                            }}
+                                            min="1"
+                                            step="1"
+                                            className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 ${
+                                                errors.energy ? 'border-red-500 input-error' : 'border-gray-300'
+                                            }`}
+                                            placeholder="e.g., 100"
+                                        />
+                                        <div className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-500">
+                                            kWh
+                                        </div>
+                                    </div>
+                                    {errors.energy && <p className="mt-1 text-sm text-red-600">{errors.energy}</p>}
+                                </div>
+                                
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Price per kWh (STX)</label>
+                                    <div className="relative">
+                                        <input 
+                                            type="number" 
+                                            value={price}
+                                            onChange={(e) => {
+                                                setPrice(e.target.value);
+                                                if (e.target.value <= 0) {
+                                                    setErrors({...errors, price: "Please enter a positive value"});
+                                                } else {
+                                                    const newErrors = {...errors};
+                                                    delete newErrors.price;
+                                                    setErrors(newErrors);
+                                                }
+                                            }}
+                                            min="0.01"
+                                            step="0.01"
+                                            className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 ${
+                                                errors.price ? 'border-red-500 input-error' : 'border-gray-300'
+                                            }`}
+                                            placeholder="e.g., 0.20"
+                                        />
+                                        <div className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-500">
+                                            STX
+                                        </div>
+                                    </div>
+                                    {errors.price && <p className="mt-1 text-sm text-red-600">{errors.price}</p>}
+                                </div>
+                            </div>
+                            
+                            <button 
+                                type="submit"
+                                className="mt-6 bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg font-medium transition"
+                            >
+                                List Energy on Marketplace
+                            </button>
+                        </form>
+                    </div>
+                    
+                    <div className="bg-white rounded-xl shadow-md p-6">
+                        <h3 className="text-xl font-bold text-gray-800 mb-4">How It Works</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="bg-green-50 p-4 rounded-lg">
+                                <div className="bg-green-100 rounded-full w-12 h-12 flex items-center justify-center mb-3">
+                                    <i className="fas fa-plus-circle text-green-600"></i>
+                                </div>
+                                <h4 className="font-bold text-gray-800">1. List Energy</h4>
+                                <p className="text-sm text-gray-600 mt-1">Enter your surplus energy and set your price</p>
+                            </div>
+                            
+                            <div className="bg-yellow-50 p-4 rounded-lg">
+                                <div className="bg-yellow-100 rounded-full w-12 h-12 flex items-center justify-center mb-3">
+                                    <i className="fas fa-bolt text-yellow-600"></i>
+                                </div>
+                                <h4 className="font-bold text-gray-800">2. Tokenize</h4>
+                                <p className="text-sm text-gray-600 mt-1">Energy is converted to tokens on Stacks blockchain</p>
+                            </div>
+                            
+                            <div className="bg-blue-50 p-4 rounded-lg">
+                                <div className="bg-blue-100 rounded-full w-12 h-12 flex items-center justify-center mb-3">
+                                    <i className="fas fa-hand-holding-usd text-blue-600"></i>
+                                </div>
+                                <h4 className="font-bold text-gray-800">3. Get Paid</h4>
+                                <p className="text-sm text-gray-600 mt-1">Receive STX tokens when consumers buy your energy</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Marketplace Component
+        function Marketplace({ listings, onPurchase, purchases, showNotification }) {
+            const [energyAmount, setEnergyAmount] = React.useState({});
+            const [activeTab, setActiveTab] = React.useState('market');
+            const [errors, setErrors] = React.useState({});
+
+            const handlePurchase = (listingId) => {
+                const amount = energyAmount[listingId] || 1;
+                const listing = listings.find(l => l.id === listingId);
+                
+                // Validation: Check if amount is positive
+                if (!amount || amount <= 0) {
+                    showNotification("Please enter a positive amount to purchase", true);
+                    setErrors({...errors, [listingId]: "Please enter a positive amount"});
+                    return;
+                }
+                
+                // Validation: Check if purchase amount exceeds available energy
+                if (amount > listing.energy) {
+                    showNotification(`Cannot purchase more than ${listing.energy} kWh available`, true);
+                    setErrors({...errors, [listingId]: `Max available: ${listing.energy} kWh`});
+                    return;
+                }
+                
+                onPurchase(listingId, amount);
+                setEnergyAmount({...energyAmount, [listingId]: 1});
+                setErrors({...errors, [listingId]: null});
+            };
+
+            const handleAmountChange = (listingId, value) => {
+                setEnergyAmount({...energyAmount, [listingId]: value});
+                
+                // Clear error when user starts typing
+                if (errors[listingId]) {
+                    setErrors({...errors, [listingId]: null});
+                }
+            };
+
+            return (
+                <div>
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-2xl font-bold text-gray-800">Energy Marketplace</h2>
+                        <div className="flex bg-gray-100 rounded-lg p-1">
+                            <button 
+                                className={`px-4 py-2 rounded-lg ${activeTab === 'market' ? 'bg-white shadow' : ''}`}
+                                onClick={() => setActiveTab('market')}
+                            >
+                                Market
+                            </button>
+                            <button 
+                                className={`px-4 py-2 rounded-lg ${activeTab === 'purchases' ? 'bg-white shadow' : ''}`}
+                                onClick={() => setActiveTab('purchases')}
+                            >
+                                My Purchases
+                            </button>
+                        </div>
+                    </div>
+                    
+                    {activeTab === 'market' ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {listings.filter(l => l.energy > 0).map(listing => (
+                                <div key={listing.id} className="bg-white rounded-xl shadow-md overflow-hidden energy-card">
+                                    <div className="p-6">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <h3 className="font-bold text-gray-800 text-lg">{listing.producer}</h3>
+                                                <p className="text-gray-600 text-sm">{listing.location}</p>
+                                            </div>
+                                            <span className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full">
+                                                {listing.type}
+                                            </span>
+                                        </div>
+                                        
+                                        <div className="mt-4 flex justify-between">
+                                            <div>
+                                                <p className="text-sm text-gray-600">Available</p>
+                                                <p className="font-bold text-gray-800">{listing.energy} kWh</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-sm text-gray-600">Price</p>
+                                                <p className="font-bold text-gray-800">{listing.price} STX</p>
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="mt-6">
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Amount (kWh)</label>
+                                            <div className="relative">
+                                                <input 
+                                                    type="number" 
+                                                    min="1"
+                                                    max={listing.energy}
+                                                    value={energyAmount[listing.id] || ''}
+                                                    onChange={(e) => handleAmountChange(listing.id, parseInt(e.target.value))}
+                                                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                                                        errors[listing.id] ? 'border-red-500 input-error' : 'border-gray-300'
+                                                    }`}
+                                                    placeholder={`1-${listing.energy}`}
+                                                />
+                                                <div className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-500">
+                                                    kWh
+                                                </div>
+                                            </div>
+                                            {errors[listing.id] && (
+                                                <p className="mt-1 text-sm text-red-600">{errors[listing.id]}</p>
+                                            )}
+                                        </div>
+                                        
+                                        <button 
+                                            onClick={() => handlePurchase(listing.id)}
+                                            className="mt-4 w-full bg-blue-500 hover:bg-blue-600 text-white py-2 rounded-lg font-medium transition"
+                                        >
+                                            Buy Energy
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="bg-gray-50 px-6 py-3 border-t">
+                                        <p className="text-xs text-gray-600">
+                                            Transaction will be recorded on Stacks blockchain
+                                        </p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="bg-white rounded-xl shadow-md overflow-hidden">
+                            <table className="w-full">
+                                <thead className="bg-gray-50">
+                                    <tr>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Producer</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Price</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-200">
+                                    {purchases.length > 0 ? purchases.map(purchase => (
+                                        <tr key={purchase.id}>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="font-medium text-gray-800">{purchase.producer}</div>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="text-gray-800">{purchase.amount} kWh</div>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="text-gray-800">{purchase.totalPrice.toFixed(2)} STX</div>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="text-gray-600">{purchase.date}</div>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <span className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full">
+                                                    Completed
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    )) : (
+                                        <tr>
+                                            <td colSpan="5" className="px-6 py-4 text-center text-gray-600">
+                                                You haven't made any purchases yet.
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                    
+                    <div className="mt-8 bg-white rounded-xl shadow-md p-6">
+                        <h3 className="text-xl font-bold text-gray-800 mb-4">Blockchain Integration</h3>
+                        <div className="bg-gray-100 p-4 rounded-lg">
+                            <pre className="text-sm overflow-auto">
+                                {clarityContractCode}
+                            </pre>
+                        </div>
+                        <p className="mt-4 text-gray-600 text-sm">
+                            The smart contract handles token transfers on the Stacks blockchain. Each energy purchase triggers a token transfer from producer to consumer.
+                        </p>
+                    </div>
+                </div>
+            );
+        }
+
+        // Render the app
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
