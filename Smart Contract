@@ -1,0 +1,44 @@
+ Smart Contract
+
+**contracts/EnergyToken.clar**
+```clarity
+;; EnergyToken - SIP-010 Fungible Token Contract
+(define-constant contract-owner 'ST2CY5V39NHDPWSYMWQP12MTSYK6Z5TNMXMGQ0ZWR)
+
+(define-fungible-token EnergyToken)
+
+(define-public (mint (amount uint) (recipient principal))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) (err u100))
+        (try! (ft-mint? EnergyToken amount recipient))
+        (ok true)
+    )
+)
+
+(define-public (transfer (amount uint) (sender principal) (recipient principal) (memo (optional (buff 34))))
+    (begin
+        (asserts! (is-eq tx-sender sender) (err u101))
+        (try! (ft-transfer? EnergyToken amount sender recipient memo))
+        (ok true)
+    )
+)
+
+(define-public (get-balance (who principal))
+    (ok (ft-get-balance EnergyToken who))
+)
+
+(define-public (get-total-supply)
+    (ok (ft-get-supply EnergyToken))
+)
+
+(define-public (get-name)
+    (ok "EnergyToken")
+)
+
+(define-public (get-symbol)
+    (ok "GET")
+)
+
+(define-public (get-decimals)
+    (ok u2)
+)
